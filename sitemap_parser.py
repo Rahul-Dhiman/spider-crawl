@@ -69,13 +69,16 @@ class SitemapParser:
     def is_valid_page_url(self, url: str) -> bool:
         """Check if URL meets filtering criteria."""
         if not is_http_url(url):
+            print(f"DEBUG: Rejected {url} - not HTTP")
             return False
         
         if not same_domain(url, self.domain, self.allow_subdomains):
+            print(f"DEBUG: Rejected {url} - domain mismatch")
             return False
         
         if (self.max_path_depth is not None and 
             url_path_depth(url) > self.max_path_depth):
+            print(f"DEBUG: Rejected {url} - depth {url_path_depth(url)} > {self.max_path_depth}")
             return False
         
         return True
