@@ -46,7 +46,7 @@ def load_config() -> ScraperConfig:
         ],
         domain_allow=os.getenv("DOMAIN_ALLOW", "carders.biz"),
         allow_subdomains=os.getenv("ALLOW_SUBDOMAINS", "true").lower() == "true",
-        max_path_depth=int(os.getenv("MAX_PATH_DEPTH")) if os.getenv("MAX_PATH_DEPTH") else 1,
+        max_path_depth=int(os.getenv("MAX_PATH_DEPTH")) if os.getenv("MAX_PATH_DEPTH") else None,
         concurrency=int(os.getenv("CONCURRENCY", "20")),
         headless=os.getenv("HEADLESS", "true").lower() == "true",
         bypass_cache=os.getenv("BYPASS_CACHE", "true").lower() == "true",
