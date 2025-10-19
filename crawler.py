@@ -11,7 +11,7 @@ from typing import List, Dict, Set
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
 from config import ScraperConfig
-from utils import same_domain, extract_article_text, find_next_page_url, clean_text
+from utils import same_domain_and_path, extract_article_text, find_next_page_url, clean_text
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class WebCrawler:
                 
                 next_url = find_next_page_url(page_html, current_url)
                 if (next_url and 
-                    same_domain(next_url, self.config.domain_allow, 
+                    same_domain_and_path(next_url, self.config.domain_allow, 
                                self.config.allow_subdomains)):
                     current_url = next_url
                     if self.config.delay_between_pages_sec > 0:

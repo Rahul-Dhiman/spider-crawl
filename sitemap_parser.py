@@ -8,7 +8,7 @@ from typing import List, Set, Iterable
 
 import requests
 
-from utils import is_http_url, same_domain, url_path_depth
+from utils import is_http_url, same_domain_and_path, url_path_depth
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class SitemapParser:
         if not is_http_url(url):
             return False
         
-        if not same_domain(url, self.domain, self.allow_subdomains):
+        if not same_domain_and_path(url, self.domain, self.allow_subdomains):
             return False
         
         if (self.max_path_depth is not None and 
@@ -145,7 +145,7 @@ class SitemapParser:
                 print(f"DEBUG: ACCEPTED: {url}")
             else:
                 rejected += 1
-                print(f"DEBUG: REJECTED: {url} (domain_match: {same_domain(url, self.domain, self.allow_subdomains)})")
+                print(f"DEBUG: REJECTED: {url} (domain_match: {same_domain_and_path(url, self.domain, self.allow_subdomains)})")
         
         print(f"DEBUG: Final count - accepted={accepted}, rejected={rejected}")
         logger.info("URL processing: accepted=%d, rejected=%d", accepted, rejected)
