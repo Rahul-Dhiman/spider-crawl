@@ -114,6 +114,7 @@ class SitemapParser:
                            len(child_sitemaps), len(queue))
             
             elif self.is_urlset(root):
+                logger.info("Processing urlset with %d locations", len(locations))
                 accepted = self._process_urlset(locations, page_urls, max_urls)
                 logger.info("Accepted %d URLs (total so far=%d)", 
                            accepted, len(page_urls))
@@ -130,6 +131,7 @@ class SitemapParser:
                        max_urls: int) -> int:
         """Process URLs from a urlset and add valid ones to page_urls."""
         accepted = 0
+        rejected = 0
         
         for url in locations:
             if len(page_urls) >= max_urls:
@@ -138,5 +140,11 @@ class SitemapParser:
             if self.is_valid_page_url(url):
                 page_urls.append(url)
                 accepted += 1
+            else:
+                rejected += 1
+                logger.debug("Rejected URL: %s (domain: %s, depth: %s)", 
+                           url, same_domain(url, self.domain, self.allow_subdomains),
+                           url_path_depth(url) if self.max_path_depth else "N/A")
         
+        logger.info("URL processing: accepted=%d, rejected=%d", accepted, rejected)
         return accepted

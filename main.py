@@ -14,7 +14,9 @@ from sitemap_parser import SitemapParser
 async def main() -> None:
     """Main application entry point."""
     # Setup logging
-    logger = setup_logger("web-scraper")
+    logger = setup_logger("web-scraper", level="DEBUG")
+    setup_logger("sitemap_parser", level="DEBUG")
+    setup_logger("crawler", level="DEBUG")
     
     try:
         # Load configuration
