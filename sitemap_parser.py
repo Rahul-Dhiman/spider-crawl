@@ -69,16 +69,13 @@ class SitemapParser:
     def is_valid_page_url(self, url: str) -> bool:
         """Check if URL meets filtering criteria."""
         if not is_http_url(url):
-            print(f"DEBUG: Rejected {url} - not HTTP")
             return False
         
         if not same_domain(url, self.domain, self.allow_subdomains):
-            print(f"DEBUG: Rejected {url} - domain mismatch")
             return False
         
         if (self.max_path_depth is not None and 
             url_path_depth(url) > self.max_path_depth):
-            print(f"DEBUG: Rejected {url} - depth {url_path_depth(url)} > {self.max_path_depth}")
             return False
         
         return True
@@ -106,11 +103,6 @@ class SitemapParser:
             
             root_kind = self.get_tag_suffix(root)
             locations = list(self.extract_locations(root))
-            
-            print(f"DEBUG: Processing {sitemap_url}")
-            print(f"DEBUG: Root type: {root_kind}")
-            print(f"DEBUG: Found {len(locations)} locations")
-            print(f"DEBUG: First 5 locations: {locations[:5]}")
             
             logger.info("Parsed %s: %s | <loc> count=%d", 
                        sitemap_url, root_kind, len(locations))

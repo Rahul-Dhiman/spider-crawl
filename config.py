@@ -42,7 +42,8 @@ def load_config() -> ScraperConfig:
     """Load configuration from environment variables or defaults."""
     return ScraperConfig(
         sitemap_seeds=[
-            os.getenv("SITEMAP_SEED", "https://carders.biz/sitemap.xml")
+            os.getenv("SITEMAP_SEED", "https://carders.biz/sitemap-1.xml"),
+            os.getenv("SITEMAP_SEED_2", "https://carders.biz/sitemap-2.xml")
         ],
         domain_allow=os.getenv("DOMAIN_ALLOW", "carders.biz"),
         allow_subdomains=os.getenv("ALLOW_SUBDOMAINS", "true").lower() == "true",
