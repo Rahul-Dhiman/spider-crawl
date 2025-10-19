@@ -22,18 +22,12 @@ class WebCrawler:
     def __init__(self, config: ScraperConfig):
         self.config = config
         self.results: List[Dict[str, str]] = []
+        self.login_completed = False
     
     async def login_hook(self, page, context, **kwargs):
-        """Login hook that runs once per browser context."""
-        if not self.config.use_login:
+        """Login hook that runs only once globally."""
+        if not self.config.use_login or self.login_completed:
             return page
-        
-        # Avoid re-running login on the same browser context
-        try:
-            if getattr(context, "_login_done", False):
-                return page
-        except Exception:
-            pass
         
         logger.info("Starting login flow...")
         
@@ -56,14 +50,10 @@ class WebCrawler:
             
             cookies = await context.cookies()
             logger.info("Login successful; cookies=%d", len(cookies))
-            
-            try:
-                setattr(context, "_login_done", True)
-            except Exception:
-                pass
+            self.login_completed = True
         
         except Exception as e:
-            logger.warning("Login flow failed for this context: %s", e)
+            logger.warning("Login flow failed: %s", e)
         
         return page
     
