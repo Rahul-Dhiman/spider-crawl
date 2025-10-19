@@ -62,7 +62,13 @@ class WebCrawler:
         """Crawl a single URL with pagination support."""
         async with semaphore:
             start_time = time.time()
+            if self.results and len(self.results) % 10 == 0:
+                self.results.append({"url": url, "Body text content": body_text})
+                await self._save_incremental_results()
             
+            if len(self.results) >= 1735:
+                continue
+
             try:
                 run_config = CrawlerRunConfig(
                     cache_mode=CacheMode.BYPASS if self.config.bypass_cache else CacheMode.DEFAULT,
@@ -80,10 +86,7 @@ class WebCrawler:
                 elapsed_time = time.time() - start_time
                 logger.info("OK: %s | body_len=%d | %.2fs", 
                            url, len(body_text), elapsed_time)
-                
-                self.results.append({"url": url, "Body text content": body_text})
-                await self._save_incremental_results()
-                
+                                
                 if self.config.delay_between_pages_sec > 0:
                     await asyncio.sleep(self.config.delay_between_pages_sec)
             
