@@ -104,6 +104,11 @@ class SitemapParser:
             root_kind = self.get_tag_suffix(root)
             locations = list(self.extract_locations(root))
             
+            print(f"DEBUG: Processing {sitemap_url}")
+            print(f"DEBUG: Root type: {root_kind}")
+            print(f"DEBUG: Found {len(locations)} locations")
+            print(f"DEBUG: First 5 locations: {locations[:5]}")
+            
             logger.info("Parsed %s: %s | <loc> count=%d", 
                        sitemap_url, root_kind, len(locations))
             
@@ -114,8 +119,10 @@ class SitemapParser:
                            len(child_sitemaps), len(queue))
             
             elif self.is_urlset(root):
+                print(f"DEBUG: Processing urlset with {len(locations)} locations")
                 logger.info("Processing urlset with %d locations", len(locations))
                 accepted = self._process_urlset(locations, page_urls, max_urls)
+                print(f"DEBUG: Accepted {accepted} URLs from this urlset")
                 logger.info("Accepted %d URLs (total so far=%d)", 
                            accepted, len(page_urls))
             
@@ -140,11 +147,11 @@ class SitemapParser:
             if self.is_valid_page_url(url):
                 page_urls.append(url)
                 accepted += 1
+                print(f"DEBUG: ACCEPTED: {url}")
             else:
                 rejected += 1
-                logger.debug("Rejected URL: %s (domain: %s, depth: %s)", 
-                           url, same_domain(url, self.domain, self.allow_subdomains),
-                           url_path_depth(url) if self.max_path_depth else "N/A")
+                print(f"DEBUG: REJECTED: {url} (domain_match: {same_domain(url, self.domain, self.allow_subdomains)})")
         
+        print(f"DEBUG: Final count - accepted={accepted}, rejected={rejected}")
         logger.info("URL processing: accepted=%d, rejected=%d", accepted, rejected)
         return accepted
