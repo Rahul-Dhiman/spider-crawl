@@ -110,7 +110,7 @@ def is_http_url(s: str) -> bool:
 
     return s.startswith("http://") or s.startswith("https://")
 
-def same_domain(url: str, allow: str, allow_subdomains: bool) -> bool:
+def same_domain_and_path(url: str, allow: str, allow_subdomains: bool) -> bool:
 
     netloc = urlparse(url).netloc.lower()
 
@@ -252,7 +252,7 @@ def expand_sitemaps(seed_urls: List[str],
 
                     continue
 
-                if not same_domain(u, domain, allow_subdomains):
+                if not same_domain_and_path(u, domain, allow_subdomains):
 
                     continue
 
@@ -282,7 +282,7 @@ def expand_sitemaps(seed_urls: List[str],
 
                     continue
 
-                if not same_domain(u, domain, allow_subdomains):
+                if not same_domain_and_path(u, domain, allow_subdomains):
 
                     continue
 
@@ -445,7 +445,7 @@ async def crawl_urls(urls: List[str]) -> List[dict]:
                     if m:
                         next_href = m.group(1)
                         next_url = urljoin(current_url, next_href)
-                        if not same_domain(next_url, DOMAIN_ALLOW, ALLOW_SUBDOMAINS):
+                        if not same_domain_and_path(next_url, DOMAIN_ALLOW, ALLOW_SUBDOMAINS):
                             break
                         current_url = next_url
                         if DELAY_BETWEEN_PAGES_SEC > 0:

@@ -1,17 +1,19 @@
 """Web crawler implementation with login support and pagination handling."""
 
 import asyncio
-import json
 import logging
-import os
+import gc
 import tempfile
-import time
+import os
 from typing import List, Dict, Set
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from playwright.async_api import async_playwright, Browser, Page
 
 from config import ScraperConfig
-from utils import same_domain, extract_article_text, find_next_page_url, clean_text
+from utils import same_domain_and_path, extract_article_text, find_next_page_url, clean_text
+from system_monitor import get_system_health
+from resource_manager import ResourceManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,18 +24,45 @@ class WebCrawler:
     def __init__(self, config: ScraperConfig):
         self.config = config
         self.results: List[Dict[str, str]] = []
+        self.login_completed = False
+        self.browser = None
+        self.context = None
+        self.urls_processed = 0
+        self.resource_manager = ResourceManager(initial_concurrency=config.concurrency)
+        
+        # Log configuration details
+        logger.info("Initializing WebCrawler with configuration:")
+        logger.info("Domain: %s (allow_subdomains=%s)", 
+                    config.domain_allow, config.allow_subdomains)
+        logger.info("Concurrency: %d, Max Pages: %d", 
+                    config.concurrency, config.max_pages)
+        logger.info("Headless Mode: %s, Bypass Cache: %s", 
+                    config.headless, config.bypass_cache)
+        logger.info("Login Enabled: %s", config.use_login)
+        logger.info("Pagination Limit: %d, Delay Between Pages: %.2f sec", 
+                    config.pagination_limit, config.delay_between_pages_sec)
+        logger.info("Output File: %s", config.output_file)
+        logger.info("Request Timeout: %d ms", config.request_timeout_ms)
+        
+        if config.max_path_depth:
+            logger.info("Max Path Depth: %d", config.max_path_depth)
+    
+    async def __aenter__(self):
+        playwright = await async_playwright().start()
+        self.browser = await playwright.chromium.launch(headless=True)
+        self.context = await self.browser.new_context()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.context:
+            await self.context.close()
+        if self.browser:
+            await self.browser.close()
     
     async def login_hook(self, page, context, **kwargs):
-        """Login hook that runs once per browser context."""
-        if not self.config.use_login:
+        """Login hook that runs only once globally."""
+        if not self.config.use_login or self.login_completed:
             return page
-        
-        # Avoid re-running login on the same browser context
-        try:
-            if getattr(context, "_login_done", False):
-                return page
-        except Exception:
-            pass
         
         logger.info("Starting login flow...")
         
@@ -56,24 +85,61 @@ class WebCrawler:
             
             cookies = await context.cookies()
             logger.info("Login successful; cookies=%d", len(cookies))
-            
-            try:
-                setattr(context, "_login_done", True)
-            except Exception:
-                pass
+            self.login_completed = True
         
         except Exception as e:
-            logger.warning("Login flow failed for this context: %s", e)
+            logger.warning("Login flow failed: %s", e)
         
         return page
+    
+    def _is_valid_url(self, url: str) -> bool:
+        """Validate URL against domain and path requirements"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            
+            # Check domain
+            if not parsed.netloc.endswith(self.config.domain_allow.split('/')[0]):
+                return False
+                
+            # Check if path contains /threads
+            if '/threads' not in parsed.path:
+                return False
+                
+            return True
+        except Exception as e:
+            logger.error(f"URL validation error for {url}: {e}")
+            return False
     
     async def crawl_single_url(self, crawler: AsyncWebCrawler, url: str, 
                               semaphore: asyncio.Semaphore) -> None:
         """Crawl a single URL with pagination support."""
-        async with semaphore:
-            start_time = time.time()
+        if not self._is_valid_url(url):
+            return
             
+        async with semaphore:
             try:
+                self.urls_processed += 1
+                
+                # Check system health and cleanup every 100 URLs
+                if self.urls_processed % 100 == 0:
+                    stats = get_system_health()
+                    logger.info(f"=== Progress: {self.urls_processed} URLs processed ===")
+                    logger.info(f"CPU Usage: {stats['cpu_percent']}%")
+                    logger.info(f"Memory Usage: {stats['memory_percent']}%")
+                    logger.info(f"Chrome Instances: {stats['chrome_processes']}")
+                    logger.info(f"Chrome Memory: {stats['chrome_memory_mb']:.0f}MB")
+                    
+                    # Aggressive cleanup if memory usage is high
+                    if stats['memory_percent'] > 70:
+                        logger.warning("High memory usage - forcing cleanup")
+                        gc.collect()
+                        await crawler.cleanup()  # Add this method to AsyncWebCrawler
+                        await asyncio.sleep(5)  # Cool-down period
+                
+                    # Save incremental results
+                    await self._save_incremental_results()
+
                 run_config = CrawlerRunConfig(
                     cache_mode=CacheMode.BYPASS if self.config.bypass_cache else CacheMode.DEFAULT,
                     js_code="try{window.scrollTo(0, document.body.scrollHeight);}catch(e){}"
@@ -82,23 +148,16 @@ class WebCrawler:
                 result = await crawler.arun(url, config=run_config)
                 
                 if not result or not result.success:
-                    logger.warning("FAILED: %s", url)
                     return
                 
                 body_text = await self._process_pagination(crawler, url, result, run_config)
-                
-                elapsed_time = time.time() - start_time
-                logger.info("OK: %s | body_len=%d | %.2fs", 
-                           url, len(body_text), elapsed_time)
-                
                 self.results.append({"url": url, "Body text content": body_text})
-                await self._save_incremental_results()
                 
                 if self.config.delay_between_pages_sec > 0:
                     await asyncio.sleep(self.config.delay_between_pages_sec)
-            
+    
             except Exception as e:
-                logger.warning("ERROR %s: %s", url, e)
+                logger.error(f"Error processing {url}: {str(e)}")
     
     async def _process_pagination(self, crawler: AsyncWebCrawler, initial_url: str, 
                                  initial_result, run_config) -> str:
@@ -137,7 +196,7 @@ class WebCrawler:
                 
                 next_url = find_next_page_url(page_html, current_url)
                 if (next_url and 
-                    same_domain(next_url, self.config.domain_allow, 
+                    same_domain_and_path(next_url, self.config.domain_allow, 
                                self.config.allow_subdomains)):
                     current_url = next_url
                     if self.config.delay_between_pages_sec > 0:
@@ -152,16 +211,26 @@ class WebCrawler:
             return clean_text(first_markdown)
     
     async def _save_incremental_results(self) -> None:
-        """Save results incrementally to avoid data loss."""
+        """Save results incrementally with proper temp file handling."""
         try:
-            fd, tmp_path = tempfile.mkstemp(prefix="crawl_", suffix=".json")
-            with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
-                json.dump(self.results, temp_file, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, self.config.output_file)
-            logger.info("Saved %d items", len(self.results))
+            with tempfile.NamedTemporaryFile(mode='w', 
+                                           delete=False, 
+                                           suffix='.json',
+                                           encoding='utf-8') as tf:
+                json.dump(self.results, tf, ensure_ascii=False, indent=2)
+                temp_name = tf.name
+
+            # Atomic replace
+            os.replace(temp_name, self.config.output_file)
+            logger.info(f"Saved {len(self.results)} items")
         except Exception as e:
-            logger.warning("Failed to persist results: %s", e)
-    
+            logger.warning(f"Failed to persist results: {e}")
+            if 'temp_name' in locals():
+                try:
+                    os.unlink(temp_name)
+                except:
+                    pass
+
     async def crawl_urls(self, urls: List[str]) -> List[Dict[str, str]]:
         """Crawl multiple URLs concurrently."""
         browser_config = BrowserConfig(headless=self.config.headless)
@@ -174,13 +243,68 @@ class WebCrawler:
             logger.info("Begin crawl of %d URLs (concurrency=%d)", 
                        len(urls), self.config.concurrency)
             
-            tasks = [
-                asyncio.create_task(self.crawl_single_url(crawler, url, semaphore))
-                for url in urls
-            ]
-            
-            await asyncio.gather(*tasks, return_exceptions=True)
-            await crawler.close()
-        
+            try:
+                tasks = [
+                    asyncio.create_task(self.crawl_single_url(crawler, url, semaphore))
+                    for url in urls
+                ]
+                
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                # Cleanup
+                await crawler.close()
+                gc.collect()
+                
+                # Optional: Suggest system cleanup
+                if psutil.virtual_memory().percent > 90:
+                    logger.warning("System needs cleanup - consider running: sync; echo 3 > /proc/sys/vm/drop_caches")
+    
         logger.info("Crawl finished; collected %d pages", len(self.results))
         return self.results
+    
+    async def _crawl_single_url_with_semaphore(self, url: str, semaphore: asyncio.Semaphore):
+        """Crawl a single URL with semaphore control."""
+        async with semaphore:
+            try:
+                page = await self.context.new_page()
+                try:
+                    result = await self._process_page(page, url)
+                    return result
+                except Exception as e:
+                    logger.error(f"Failed to crawl URL {url}: {str(e)}")
+                    return None
+                finally:
+                    await page.close()
+            except Exception as e:
+                logger.error(f"Failed to create page for URL {url}: {str(e)}")
+                return None
+    
+    async def _process_page(self, page: Page, url: str) -> Dict[str, str]:
+        """Process a single page with proper cleanup."""
+        try:
+            result = await page.goto(url, wait_until="networkidle")
+            if not result:
+                return None
+
+            # Extract needed data
+            content = await page.content()
+            title = await page.title()
+
+            # Important: Clear browser cache and memory
+            await page.context.clear_cookies()
+            await page.close()
+            
+            return {
+                "url": url,
+                "title": title,
+                "content": content
+            }
+        except Exception as e:
+            logger.error(f"Error processing {url}: {str(e)}")
+            return None
+        finally:
+            try:
+                await page.close()
+            except:
+                pass
+            gc.collect()

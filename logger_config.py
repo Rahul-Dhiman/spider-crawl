@@ -3,27 +3,32 @@
 import logging
 import sys
 from typing import Optional
+from logging.handlers import RotatingFileHandler
 
 
 def setup_logger(name: str, level: str = "INFO", 
                 format_string: Optional[str] = None) -> logging.Logger:
-    """Set up and configure logger with appropriate handlers and formatting."""
-    
-    if format_string is None:
-        format_string = "[%(levelname)s] %(asctime)s - %(name)s - %(message)s"
+    """Configure minimal logger with file and console output."""
     
     logger = logging.getLogger(name)
+    logger.setLevel(getattr(logging, level))
+    logger.handlers = []
     
-    # Avoid adding multiple handlers if logger already configured
-    if logger.handlers:
-        return logger
+    # Console handler - minimal format
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(console_handler)
     
-    handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter(format_string, datefmt="%H:%M:%S")
-    handler.setFormatter(formatter)
-    
-    logger.addHandler(handler)
-    logger.setLevel(getattr(logging, level.upper()))
+    # File handler
+    file_handler = RotatingFileHandler(
+        'crawler.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s'
+    ))
+    logger.addHandler(file_handler)
     
     return logger
 

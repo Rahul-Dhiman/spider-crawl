@@ -17,13 +17,13 @@ class TestUtils(unittest.TestCase):
     def test_same_domain(self):
         """Test domain matching logic."""
         # Exact domain match
-        self.assertTrue(same_domain("https://example.com/path", "example.com", False))
-        self.assertFalse(same_domain("https://sub.example.com/path", "example.com", False))
+        self.assertTrue(same_domain_and_path("https://example.com/path", "example.com", False))
+        self.assertFalse(same_domain_and_path("https://sub.example.com/path", "example.com", False))
         
         # Subdomain matching
-        self.assertTrue(same_domain("https://sub.example.com/path", "example.com", True))
-        self.assertTrue(same_domain("https://example.com/path", "example.com", True))
-        self.assertFalse(same_domain("https://other.com/path", "example.com", True))
+        self.assertTrue(same_domain_and_path("https://sub.example.com/path", "example.com", True))
+        self.assertTrue(same_domain_and_path("https://example.com/path", "example.com", True))
+        self.assertFalse(same_domain_and_path("https://other.com/path", "example.com", True))
     
     def test_url_path_depth(self):
         """Test URL path depth calculation."""
