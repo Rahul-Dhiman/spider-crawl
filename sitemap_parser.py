@@ -5,6 +5,7 @@ import io
 import logging
 import xml.etree.ElementTree as ET
 from typing import List, Set, Iterable
+import json
 
 import requests
 
@@ -15,6 +16,12 @@ logger = logging.getLogger(__name__)
 
 class SitemapParser:
     """Handles sitemap parsing and URL extraction."""
+
+    sitemap_info = {
+        "total_urls": 0,
+        "valid_urls": 0,
+        "invalid_urls": 0,
+    }
     
     def __init__(self, domain: str, allow_subdomains: bool, max_path_depth: int = None):
         self.domain = domain
@@ -28,7 +35,7 @@ class SitemapParser:
         try:
             session = requests.Session()
             session.headers.update({
-                "User-Agent": "SpiderCrawl/1.0 (+https://example.com/bot)"
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
             })
             response = session.get(url, timeout=45)
             response.raise_for_status()
@@ -72,6 +79,7 @@ class SitemapParser:
     
     def is_valid_page_url(self, url: str) -> bool:
         """Check if URL meets filtering criteria."""
+        
         if not is_http_url(url):
             return False
         
@@ -89,10 +97,12 @@ class SitemapParser:
         queue: List[str] = list(seed_urls)
         seen_sitemaps: Set[str] = set()
         page_urls: List[str] = []
-        
+
         while queue and len(page_urls) < max_urls:
             sitemap_url = queue.pop(0)
-            
+
+            logger.info("#".join(20 * "#"))
+
             if sitemap_url in seen_sitemaps:
                 continue
             
@@ -130,19 +140,23 @@ class SitemapParser:
                 logger.info("Unknown sitemap type; best-effort accepted %d (total=%d)", 
                            accepted, len(page_urls))
         
+        logger.info("#".join(20 * "#") + " Sitemap info sunnary: %s" + "#".join(20 * "#"), json.dumps(self.sitemap_info, indent=4, ensure_ascii=False))
         return page_urls
     
     def _process_urlset(self, locations: List[str], page_urls: List[str], 
                        max_urls: int) -> int:
         """Process URLs from a urlset and add valid ones to page_urls."""
-        accepted = 0
-        
+
+        self.sitemap_info["total_urls"] += len(locations)
+        self.sitemap_info["invalid_urls"] += len(locations) - self.sitemap_info["valid_urls"]
+
         for url in locations:
             if len(page_urls) >= max_urls:
                 break
             
-            if self.is_valid_page_url(url):
+            valid = self.is_valid_page_url(url)
+            if valid:
                 page_urls.append(url)
-                accepted += 1
+                self.sitemap_info["valid_urls"] += 1
         
-        return accepted
+        return self.sitemap_info["valid_urls"]

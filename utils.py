@@ -1,25 +1,79 @@
 """Utility functions for URL processing and validation."""
 
+import logging
 import re
 import hashlib
 from urllib.parse import urlparse, urlunparse, urljoin, quote, unquote
 from typing import List
 
-
+logger = logging.getLogger(__name__)
+ 
 def is_http_url(url: str) -> bool:
     """Check if URL is HTTP/HTTPS."""
     return url.startswith(("http://", "https://"))
 
-
 def same_domain(url: str, allow: str, allow_subdomains: bool) -> bool:
-    """Check if URL belongs to allowed domain."""
-    netloc = urlparse(url).netloc.lower()
-    allow = allow.lower()
+    """
+    Check if a URL belongs to an allowed domain and matches a specific path prefix.
     
-    if allow_subdomains:
-        return netloc == allow or netloc.endswith(f".{allow}")
-    return netloc == allow
+    'allow' can be:
+    - 'https://example.com' (matches any path on the domain)
+    - 'example.com/path/v2' (matches 'example.com/path/v2' or 'example.com/path/v2/more')
+    """
+    try:
+        # 1. Parse the target URL
+        url_parts = urlparse(url.lower())
+        url_netloc = url_parts.netloc
+        # Normalize path: always start with '/', never end with one (unless it's just '/')
+        url_path = '/' + url_parts.path.strip('/')
 
+        # 2. Parse the 'allow' string
+        # Add a dummy scheme if one is missing to help urlparse
+        allow_to_parse = allow.lower()
+        if not allow_to_parse.startswith(('http://', 'https://', '//')):
+            allow_to_parse = f"//{allow_to_parse}"
+            
+        allow_parts = urlparse(allow_to_parse)
+        allow_netloc = allow_parts.netloc
+        # Normalize path
+        allow_path = '/' + allow_parts.path.strip('/')
+
+        # 3. Check Domain
+        domain_match = False
+        if allow_subdomains:
+            # Allow 'example.com' OR 'sub.example.com'
+            domain_match = (url_netloc == allow_netloc or url_netloc.endswith(f".{allow_netloc}"))
+        else:
+            # Allow ONLY 'example.com'
+            domain_match = (url_netloc == allow_netloc)
+
+        if not domain_match:
+            return False
+
+        # 4. Check Path
+        # If domain matches, check if the URL path starts with the allowed path
+        
+        # If the allowed path is just '/', it's a wildcard for all paths
+        if allow_path == '/':
+            return True
+
+        # Check if url_path starts with allow_path
+        if not url_path.startswith(allow_path):
+            return False
+            
+        # We need to ensure we're matching a full path segment.
+        # This prevents '.../path/v2page' from matching '.../path/v2'
+        
+        # If paths are identical, it's a match
+        if len(url_path) == len(allow_path):
+            return True
+            
+        # If url_path is longer, the next character must be a '/'
+        return url_path[len(allow_path)] == '/'
+
+    except ValueError:
+        # Handle potential malformed URLs
+        return False
 
 def url_path_depth(url: str) -> int:
     """Calculate URL path depth."""

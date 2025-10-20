@@ -24,6 +24,14 @@ def setup_logger(name: str, level: str = "INFO",
     
     logger.addHandler(handler)
     logger.setLevel(getattr(logging, level.upper()))
+
+    # Ensure module-level loggers also emit at the same level so their INFO logs are visible
+    # This helps surface messages from e.g. sitemap expansion steps
+    for module_name in ("sitemap_parser", "crawler", "utils", "frontier"):
+        module_logger = logging.getLogger(module_name)
+        if not module_logger.handlers:
+            module_logger.addHandler(handler)
+        module_logger.setLevel(getattr(logging, level.upper()))
     
     return logger
 

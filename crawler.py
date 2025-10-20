@@ -114,7 +114,11 @@ class WebCrawler:
         try:
             run_config = CrawlerRunConfig(
                 cache_mode=CacheMode.BYPASS if self.config.bypass_cache else CacheMode.DEFAULT,
-                js_code="try{window.scrollTo(0, document.body.scrollHeight);}catch(e){}"
+                js_code="try{window.scrollTo(0, document.body.scrollHeight);}catch(e){}",
+                page_timeout=self.config.request_timeout_ms,
+                wait_for_images=False,
+                exclude_all_images=True,
+                only_text=True
             )
             
             result = await crawler.arun(url, config=run_config)
@@ -131,8 +135,8 @@ class WebCrawler:
             
             # Dedup by content hash (lightweight)
             content_hash = compute_hash(body_text) if body_text else ""
-            self.results.append({"url": url, "Body text content": body_text, "hash": content_hash})
-            await self._save_incremental_results()
+            item = {"url": url, "Body text content": body_text, "hash": content_hash}
+            await self._emit_result(item)
             
             if self.config.delay_between_pages_sec > 0:
                 # politeness with jitter
@@ -194,13 +198,23 @@ class WebCrawler:
         else:
             return clean_text(first_markdown)
     
-    async def _save_incremental_results(self) -> None:
-        """Save results incrementally to avoid data loss."""
+    async def _emit_result(self, item: Dict[str, str]) -> None:
+        """Stream results to NDJSON to limit in-memory accumulation."""
         try:
-            fd, tmp_path = tempfile.mkstemp(prefix="crawl_", suffix=".json")
-            with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
-                json.dump(self.results, temp_file, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, self.config.output_file)
+            if getattr(self.config, "ndjson_output", True):
+                with open(self.config.ndjson_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+                self.results.append(item)
+                max_keep = getattr(self.config, "max_in_memory_results", 100)
+                if len(self.results) > max_keep:
+                    self.results = self.results[-max_keep:]
+            else:
+                # Legacy behavior: keep full list and atomically write JSON
+                self.results.append(item)
+                fd, tmp_path = tempfile.mkstemp(prefix="crawl_", suffix=".json")
+                with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+                    json.dump(self.results, temp_file, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, self.config.output_file)
             logger.info("Saved %d items", len(self.results))
         except Exception as e:
             logger.warning("Failed to persist results: %s", e)
@@ -211,7 +225,31 @@ class WebCrawler:
         Usare una coda con N worker limita davvero il numero di task vivi
         e riduce la pressione di memoria e il numero di processi Chrome.
         """
-        browser_config = BrowserConfig(headless=self.config.headless)
+        browser_config = BrowserConfig(
+            headless=self.config.headless,
+            text_mode=getattr(self.config, "text_mode", True),
+            light_mode=getattr(self.config, "light_mode", True),
+            viewport_width=getattr(self.config, "viewport_width", 1040),
+            viewport_height=getattr(self.config, "viewport_height", 768),
+            extra_args=[
+                "--disable-dev-shm-usage",
+                "--disable-background-networking",
+                "--disable-background-timer-throttling",
+                "--disable-breakpad",
+                "--disable-client-side-phishing-detection",
+                "--disable-default-apps",
+                "--disable-extensions",
+                "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter",
+                "--disable-ipc-flooding-protection",
+                "--disable-popup-blocking",
+                "--disable-prompt-on-repost",
+                "--disable-renderer-backgrounding",
+                "--force-color-profile=srgb",
+                "--metrics-recording-only",
+                "--no-first-run",
+                "--enable-features=NetworkService,NetworkServiceInProcess",
+            ],
+        )
         # Persistent frontier with normalization and depth
         frontier = SQLiteFrontier(self.config.frontier_db_path)
         for u in urls:
@@ -235,20 +273,12 @@ class WebCrawler:
                     try:
                         await self.crawl_single_url(crawler, url)
                         self.pages_processed += 1
-                        # Recycle browser periodically to avoid leaks
-                        if self.pages_processed % max(1, self.config.recycle_every_n_pages) == 0:
-                            logger.info("Recycling browser after %d pages", self.pages_processed)
-                            await crawler.close()
-                            await _asyncio.sleep(0.2)
-                            await crawler.start()
                     finally:
                         await _asyncio.sleep(0)  # yield
             
             workers = [asyncio.create_task(worker(i)) for i in range(max(1, self.config.concurrency))]
-            for w in workers:
-                w.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
-            await crawler.close()
+            # Attendi che tutti i worker terminino quando la frontier si svuota
+            await asyncio.gather(*workers)
         
         logger.info("Crawl finished; collected %d pages", len(self.results))
         return self.results
