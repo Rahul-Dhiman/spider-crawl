@@ -145,7 +145,6 @@ class SitemapParser:
                 print(f"DEBUG: Processing urlset with {len(locations)} locations")
                 logger.info("Processing urlset with %d locations", len(locations))
                 accepted = self._process_urlset(locations, page_urls, max_urls)
-                print(f"DEBUG: Accepted {accepted} URLs from this urlset")
                 logger.info("Accepted %d URLs (total so far=%d)", 
                            accepted, len(page_urls))
             
@@ -170,10 +169,8 @@ class SitemapParser:
             if self.is_valid_page_url(url):
                 page_urls.append(url)
                 accepted += 1
-                print(f"DEBUG: ACCEPTED: {url}")
             else:
                 rejected += 1
-                print(f"DEBUG: REJECTED: {url} (domain_match: {same_domain_and_path(url, self.domain, self.allow_subdomains)})")
         
         print(f"DEBUG: Final count - accepted={accepted}, rejected={rejected}")
         logger.info("URL processing: accepted=%d, rejected=%d", accepted, rejected)

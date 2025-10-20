@@ -1,20 +1,17 @@
 """Web crawler implementation with login support and pagination handling."""
 
 import asyncio
-import json
 import logging
-import os
-import tempfile
-import time
+import gc
 from typing import List, Dict, Set
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from playwright.async_api import async_playwright, Browser, Page
-import psutil
 
 from config import ScraperConfig
 from utils import same_domain_and_path, extract_article_text, find_next_page_url, clean_text
 from system_monitor import get_system_health
+from resource_manager import ResourceManager
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +136,6 @@ class WebCrawler:
                         self.config.concurrency = new_concurrency
                         
                         # Force garbage collection and pause
-                        import gc
                         gc.collect()
                         await asyncio.sleep(5)  # Cool-down period
                 
@@ -249,7 +245,6 @@ class WebCrawler:
             finally:
                 # Cleanup
                 await crawler.close()
-                import gc
                 gc.collect()
                 
                 # Optional: Suggest system cleanup

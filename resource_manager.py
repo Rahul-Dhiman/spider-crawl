@@ -23,10 +23,17 @@ class ResourceManager:
         
         if stats['cpu_percent'] > 80 or stats['memory_percent'] > 80:
             self.current_concurrency = max(5, self.current_concurrency - 5)
+            logger.warning(f"⚠️ Reducing concurrency to {self.current_concurrency}")
             return self.current_concurrency
+            
         elif stats['cpu_percent'] < 50 and stats['memory_percent'] < 60:
             self.current_concurrency = min(self.initial_concurrency, 
                                          self.current_concurrency + 2)
+            logger.info(f"Increasing concurrency to {self.current_concurrency}")
             return self.current_concurrency
             
         return None
+
+    def get_current_concurrency(self) -> int:
+        """Get current concurrency setting"""
+        return self.current_concurrency
