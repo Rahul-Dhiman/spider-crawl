@@ -10,6 +10,7 @@ from typing import List, Dict, Set
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from playwright.async_api import async_playwright, Browser, Page
+import psutil
 
 from config import ScraperConfig
 from utils import same_domain_and_path, extract_article_text, find_next_page_url, clean_text
@@ -28,6 +29,7 @@ class WebCrawler:
         self.browser = None
         self.context = None
         self.urls_processed = 0
+        self.resource_manager = ResourceManager(initial_concurrency=config.concurrency)
         
         # Log configuration details
         logger.info("Initializing WebCrawler with configuration:")
@@ -129,9 +131,18 @@ class WebCrawler:
                     logger.info(f"Chrome Instances: {stats['chrome_processes']}")
                     logger.info(f"Chrome Memory: {stats['chrome_memory_mb']:.0f}MB")
                     
-                    if stats['memory_percent'] > 90:
-                        logger.warning("⚠️ High memory usage detected!")
-                    
+                    # Add automatic throttling
+                    if stats['cpu_percent'] > 80 or stats['memory_percent'] > 80:
+                        # Reduce concurrency
+                        new_concurrency = max(5, self.config.concurrency // 2)
+                        logger.warning(f"⚠️ High resource usage - reducing concurrency to {new_concurrency}")
+                        self.config.concurrency = new_concurrency
+                        
+                        # Force garbage collection and pause
+                        import gc
+                        gc.collect()
+                        await asyncio.sleep(5)  # Cool-down period
+                
                     # Save incremental results
                     await self._save_incremental_results()
 
@@ -228,14 +239,23 @@ class WebCrawler:
             logger.info("Begin crawl of %d URLs (concurrency=%d)", 
                        len(urls), self.config.concurrency)
             
-            tasks = [
-                asyncio.create_task(self.crawl_single_url(crawler, url, semaphore))
-                for url in urls
-            ]
-            
-            await asyncio.gather(*tasks, return_exceptions=True)
-            await crawler.close()
-        
+            try:
+                tasks = [
+                    asyncio.create_task(self.crawl_single_url(crawler, url, semaphore))
+                    for url in urls
+                ]
+                
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                # Cleanup
+                await crawler.close()
+                import gc
+                gc.collect()
+                
+                # Optional: Suggest system cleanup
+                if psutil.virtual_memory().percent > 90:
+                    logger.warning("System needs cleanup - consider running: sync; echo 3 > /proc/sys/vm/drop_caches")
+    
         logger.info("Crawl finished; collected %d pages", len(self.results))
         return self.results
     
