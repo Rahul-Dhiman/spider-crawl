@@ -114,21 +114,20 @@ class WebCrawler:
                               semaphore: asyncio.Semaphore) -> None:
         """Crawl a single URL with pagination support."""
         if not self._is_valid_url(url):
-            logger.debug(f"Skipping invalid URL: {url}")
             return
             
         async with semaphore:
             self.urls_processed += 1
             
-            # Check system health every 200 URLs
-            if self.urls_processed % 200 == 0:
+            # Check system health and save results every 100 URLs
+            if self.urls_processed % 100 == 0:
                 stats = get_system_health()
-                if stats['memory_percent'] > 90:  # Memory warning threshold
+                logger.info(f"{self.urls_processed} URLs processed")
+                
+                if stats['memory_percent'] > 90:
                     logger.warning("High memory usage detected!")
-            
-            start_time = time.time()
-            if self.results and len(self.results) % 10 == 0:
-                self.results.append({"url": url, "Body text content": body_text})
+                
+                # Save incremental results
                 await self._save_incremental_results()
 
             try:
@@ -140,20 +139,16 @@ class WebCrawler:
                 result = await crawler.arun(url, config=run_config)
                 
                 if not result or not result.success:
-                    logger.warning("FAILED: %s", url)
                     return
                 
                 body_text = await self._process_pagination(crawler, url, result, run_config)
+                self.results.append({"url": url, "Body text content": body_text})
                 
-                elapsed_time = time.time() - start_time
-                logger.info("OK: %s | body_len=%d | %.2fs", 
-                           url, len(body_text), elapsed_time)
-                                
                 if self.config.delay_between_pages_sec > 0:
                     await asyncio.sleep(self.config.delay_between_pages_sec)
-            
+        
             except Exception as e:
-                logger.warning("ERROR %s: %s", url, e)
+                logger.error(f"Error processing {url}: {str(e)}")
     
     async def _process_pagination(self, crawler: AsyncWebCrawler, initial_url: str, 
                                  initial_result, run_config) -> str:
@@ -260,14 +255,11 @@ class WebCrawler:
     async def _process_page(self, page: Page, url: str) -> Dict[str, str]:
         """Process a single page and extract data."""
         try:
-            logger.debug(f"Starting to process URL: {url}")
             
-            logger.debug(f"Navigating to {url}")
             response = await page.goto(url, wait_until="networkidle")
             
             # Log response status
             status = response.status if response else 'unknown'
-            logger.debug(f"Page load status for {url}: {status}")
 
             # Log page title
             title = await page.title()
