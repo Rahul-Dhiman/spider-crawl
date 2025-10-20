@@ -117,20 +117,24 @@ class WebCrawler:
             return
             
         async with semaphore:
-            self.urls_processed += 1
-            
-            # Check system health and save results every 100 URLs
-            if self.urls_processed % 100 == 0:
-                stats = get_system_health()
-                logger.info(f"{self.urls_processed} URLs processed")
-                
-                if stats['memory_percent'] > 90:
-                    logger.warning("High memory usage detected!")
-                
-                # Save incremental results
-                await self._save_incremental_results()
-
             try:
+                self.urls_processed += 1
+                
+                # Check system health and save results every 100 URLs
+                if self.urls_processed % 100 == 0:
+                    stats = get_system_health()
+                    logger.info(f"=== Progress: {self.urls_processed} URLs processed ===")
+                    logger.info(f"CPU Usage: {stats['cpu_percent']}%")
+                    logger.info(f"Memory Usage: {stats['memory_percent']}%")
+                    logger.info(f"Chrome Instances: {stats['chrome_processes']}")
+                    logger.info(f"Chrome Memory: {stats['chrome_memory_mb']:.0f}MB")
+                    
+                    if stats['memory_percent'] > 90:
+                        logger.warning("⚠️ High memory usage detected!")
+                    
+                    # Save incremental results
+                    await self._save_incremental_results()
+
                 run_config = CrawlerRunConfig(
                     cache_mode=CacheMode.BYPASS if self.config.bypass_cache else CacheMode.DEFAULT,
                     js_code="try{window.scrollTo(0, document.body.scrollHeight);}catch(e){}"
@@ -146,7 +150,7 @@ class WebCrawler:
                 
                 if self.config.delay_between_pages_sec > 0:
                     await asyncio.sleep(self.config.delay_between_pages_sec)
-        
+    
             except Exception as e:
                 logger.error(f"Error processing {url}: {str(e)}")
     
