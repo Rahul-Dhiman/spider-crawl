@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import gc
+import tempfile
+import os
 from typing import List, Dict, Set
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
@@ -119,7 +121,7 @@ class WebCrawler:
             try:
                 self.urls_processed += 1
                 
-                # Check system health and save results every 100 URLs
+                # Check system health and cleanup every 100 URLs
                 if self.urls_processed % 100 == 0:
                     stats = get_system_health()
                     logger.info(f"=== Progress: {self.urls_processed} URLs processed ===")
@@ -128,15 +130,11 @@ class WebCrawler:
                     logger.info(f"Chrome Instances: {stats['chrome_processes']}")
                     logger.info(f"Chrome Memory: {stats['chrome_memory_mb']:.0f}MB")
                     
-                    # Add automatic throttling
-                    if stats['cpu_percent'] > 80 or stats['memory_percent'] > 80:
-                        # Reduce concurrency
-                        new_concurrency = max(5, self.config.concurrency // 2)
-                        logger.warning(f"⚠️ High resource usage - reducing concurrency to {new_concurrency}")
-                        self.config.concurrency = new_concurrency
-                        
-                        # Force garbage collection and pause
+                    # Aggressive cleanup if memory usage is high
+                    if stats['memory_percent'] > 70:
+                        logger.warning("High memory usage - forcing cleanup")
                         gc.collect()
+                        await crawler.cleanup()  # Add this method to AsyncWebCrawler
                         await asyncio.sleep(5)  # Cool-down period
                 
                     # Save incremental results
@@ -213,16 +211,26 @@ class WebCrawler:
             return clean_text(first_markdown)
     
     async def _save_incremental_results(self) -> None:
-        """Save results incrementally to avoid data loss."""
+        """Save results incrementally with proper temp file handling."""
         try:
-            fd, tmp_path = tempfile.mkstemp(prefix="crawl_", suffix=".json")
-            with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
-                json.dump(self.results, temp_file, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, self.config.output_file)
-            logger.info("Saved %d items", len(self.results))
+            with tempfile.NamedTemporaryFile(mode='w', 
+                                           delete=False, 
+                                           suffix='.json',
+                                           encoding='utf-8') as tf:
+                json.dump(self.results, tf, ensure_ascii=False, indent=2)
+                temp_name = tf.name
+
+            # Atomic replace
+            os.replace(temp_name, self.config.output_file)
+            logger.info(f"Saved {len(self.results)} items")
         except Exception as e:
-            logger.warning("Failed to persist results: %s", e)
-    
+            logger.warning(f"Failed to persist results: {e}")
+            if 'temp_name' in locals():
+                try:
+                    os.unlink(temp_name)
+                except:
+                    pass
+
     async def crawl_urls(self, urls: List[str]) -> List[Dict[str, str]]:
         """Crawl multiple URLs concurrently."""
         browser_config = BrowserConfig(headless=self.config.headless)
@@ -272,41 +280,31 @@ class WebCrawler:
                 return None
     
     async def _process_page(self, page: Page, url: str) -> Dict[str, str]:
-        """Process a single page and extract data."""
+        """Process a single page with proper cleanup."""
         try:
-            
-            response = await page.goto(url, wait_until="networkidle")
-            
-            # Log response status
-            status = response.status if response else 'unknown'
+            result = await page.goto(url, wait_until="networkidle")
+            if not result:
+                return None
 
-            # Log page title
+            # Extract needed data
+            content = await page.content()
             title = await page.title()
-            logger.debug(f"Page title: {title}")
 
-            # Log memory usage of the page
-            try:
-                metrics = await page.evaluate("() => performance.memory")
-                logger.debug(f"Page memory usage: {metrics.get('usedJSHeapSize', 'N/A')} bytes")
-            except Exception:
-                logger.debug("Memory metrics not available")
-
-            # Add your page processing logic here
-            # ...
-
-            result = {"url": url, "status": "success", "title": title}
-            logger.debug(f"Successfully processed {url}")
-            return result
-
+            # Important: Clear browser cache and memory
+            await page.context.clear_cookies()
+            await page.close()
+            
+            return {
+                "url": url,
+                "title": title,
+                "content": content
+            }
         except Exception as e:
-            logger.error(f"Error processing {url}: {str(e)}", exc_info=True)
-            # Log additional context about the failure
-            try:
-                current_url = page.url
-                if current_url != url:
-                    logger.debug(f"Failed URL redirected to: {current_url}")
-            except Exception:
-                pass
+            logger.error(f"Error processing {url}: {str(e)}")
             return None
         finally:
-            logger.debug(f"Finished processing URL: {url}")
+            try:
+                await page.close()
+            except:
+                pass
+            gc.collect()
