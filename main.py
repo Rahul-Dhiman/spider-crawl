@@ -14,9 +14,7 @@ from sitemap_parser import SitemapParser
 async def main() -> None:
     """Main application entry point."""
     # Setup logging
-    logger = setup_logger("web-scraper", level="DEBUG")
-    setup_logger("sitemap_parser", level="DEBUG")
-    setup_logger("crawler", level="DEBUG")
+    logger = setup_logger("web-scraper")
     
     try:
         # Load configuration
@@ -46,9 +44,6 @@ async def main() -> None:
         # Initialize and run crawler
         crawler = WebCrawler(config)
         data = await crawler.crawl_urls(urls)
-        
-        # Filter out None values (failed URLs)
-        data = [item for item in data if item is not None]
         
         # Save final results
         await save_final_results(data, config.output_file, logger)

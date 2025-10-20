@@ -1,7 +1,8 @@
 """Utility functions for URL processing and validation."""
 
 import re
-from urllib.parse import urlparse
+import hashlib
+from urllib.parse import urlparse, urlunparse, urljoin, quote, unquote
 from typing import List
 
 
@@ -9,40 +10,15 @@ def is_http_url(url: str) -> bool:
     """Check if URL is HTTP/HTTPS."""
     return url.startswith(("http://", "https://"))
 
-def same_domain_and_path(url: str, allow: str, allow_subdomains: bool) -> bool:
-    """
-    Check if a URL belongs to the allowed domain (and optionally subdomains)
-    and starts with the allowed path.
-    
-    Example:
-        same_domain_and_path(
-            "https://carders.biz/members/123",
-            "carders.biz/members/",
-            allow_subdomains=False
-        ) -> True
-    """
-    parsed = urlparse(url)
-    netloc = parsed.netloc.lower()
-    path = parsed.path.lower()
-    
-    # Split allowed into domain + path
-    allow = allow.lower()
-    if "/" in allow:
-        domain, allowed_path = allow.split("/", 1)
-        allowed_path = "/" + allowed_path  # ensure it starts with '/'
-    else:
-        domain, allowed_path = allow, "/"
-    
-    # Domain check
-    if allow_subdomains:
-        domain_ok = netloc == domain or netloc.endswith(f".{domain}")
-    else:
-        domain_ok = netloc == domain
 
-    # Path check (must start with allowed_path)
-    path_ok = path.startswith(allowed_path)
+def same_domain(url: str, allow: str, allow_subdomains: bool) -> bool:
+    """Check if URL belongs to allowed domain."""
+    netloc = urlparse(url).netloc.lower()
+    allow = allow.lower()
     
-    return domain_ok and path_ok
+    if allow_subdomains:
+        return netloc == allow or netloc.endswith(f".{allow}")
+    return netloc == allow
 
 
 def url_path_depth(url: str) -> int:
@@ -87,3 +63,27 @@ def clean_text(text: str) -> str:
     """Clean and normalize text content."""
     text = text.replace('\n', ' ').replace('\t', ' ')
     return re.sub(r' {3,}', '  ', text).strip()
+
+
+def normalize_url(url: str, base: str = "") -> str:
+    """Normalize URL for dedupe: lower host, strip fragments, canonicalize path and query."""
+    if base:
+        url = urljoin(base, url)
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc.lower()
+    path = quote(unquote(parsed.path or "/"))
+    query = parsed.query
+    # Remove default ports
+    if netloc.endswith(":80") and scheme == "http":
+        netloc = netloc[:-3]
+    if netloc.endswith(":443") and scheme == "https":
+        netloc = netloc[:-4]
+    return urlunparse((scheme, netloc, path, "", query, ""))
+
+
+def compute_hash(content: str) -> str:
+    """Stable SHA256 of a text for duplicate detection."""
+    h = hashlib.sha256()
+    h.update(content.encode("utf-8", errors="ignore"))
+    return h.hexdigest()

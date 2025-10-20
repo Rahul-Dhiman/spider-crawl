@@ -11,7 +11,46 @@ from typing import List, Dict, Set
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
 from config import ScraperConfig
-from utils import same_domain, extract_article_text, find_next_page_url, clean_text
+from frontier import SQLiteFrontier
+from utils import normalize_url, compute_hash
+try:
+    from utils import same_domain, extract_article_text, find_next_page_url, clean_text
+except Exception:
+    import re
+    from urllib.parse import urlparse, urljoin
+    
+    def same_domain(url: str, allow: str, allow_subdomains: bool) -> bool:
+        netloc = urlparse(url).netloc.lower()
+        allow_l = allow.lower()
+        if allow_subdomains:
+            return netloc == allow_l or netloc.endswith(f".{allow_l}")
+        return netloc == allow_l
+    
+    def extract_article_text(html: str):
+        matches = re.findall(r'(?is)<article\\b[^>]*>(.*?)</article>', html)
+        collected = []
+        for inner in matches:
+            text = re.sub(r'(?s)<[^>]+>', '', inner)
+            text = text.replace('\n', ' ').replace('\t', ' ')
+            text = re.sub(r' {3,}', '  ', text).strip()
+            if text:
+                collected.append(text)
+        return collected
+    
+    def find_next_page_url(html: str, current_url: str) -> str:
+        patterns = [
+            r'(?is)<a[^>]+class=["\'[^"\']*pageNav-jump--next[^"\']*["\'][^>]*href=["\']([^"\']+)["\']',
+            r'(?is)<a[^>]*href=["\']([^"\']+)["\'][^>]*>\s*<[^>]*pageNav-jump--next'
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, html)
+            if m:
+                return urljoin(current_url, m.group(1))
+        return ""
+    
+    def clean_text(text: str) -> str:
+        text = text.replace('\n', ' ').replace('\t', ' ')
+        return re.sub(r' {3,}', '  ', text).strip()
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +61,7 @@ class WebCrawler:
     def __init__(self, config: ScraperConfig):
         self.config = config
         self.results: List[Dict[str, str]] = []
+        self.pages_processed: int = 0
     
     async def login_hook(self, page, context, **kwargs):
         """Login hook that runs once per browser context."""
@@ -89,11 +129,16 @@ class WebCrawler:
             logger.info("OK: %s | body_len=%d | %.2fs", 
                        url, len(body_text), elapsed_time)
             
-            self.results.append({"url": url, "Body text content": body_text})
+            # Dedup by content hash (lightweight)
+            content_hash = compute_hash(body_text) if body_text else ""
+            self.results.append({"url": url, "Body text content": body_text, "hash": content_hash})
             await self._save_incremental_results()
             
             if self.config.delay_between_pages_sec > 0:
-                await asyncio.sleep(self.config.delay_between_pages_sec)
+                # politeness with jitter
+                import random
+                jitter = random.randint(0, max(0, self.config.politeness_jitter_ms)) / 1000.0
+                await asyncio.sleep(self.config.delay_between_pages_sec + jitter)
         
         except Exception as e:
             logger.warning("ERROR %s: %s", url, e)
@@ -167,30 +212,39 @@ class WebCrawler:
         e riduce la pressione di memoria e il numero di processi Chrome.
         """
         browser_config = BrowserConfig(headless=self.config.headless)
-        queue: asyncio.Queue[str] = asyncio.Queue()
+        # Persistent frontier with normalization and depth
+        frontier = SQLiteFrontier(self.config.frontier_db_path)
         for u in urls:
-            queue.put_nowait(u)
+            nu = normalize_url(u)
+            frontier.put(nu, depth=0)
         
         async with AsyncWebCrawler(config=browser_config) as crawler:
             crawler.crawler_strategy.set_hook("on_page_context_created", self.login_hook)
             await crawler.start()
             
-            logger.info("Begin crawl of %d URLs (concurrency=%d)", 
-                       queue.qsize(), self.config.concurrency)
+            logger.info("Begin crawl (frontier size=%d, concurrency=%d)", 
+                       frontier.size(), self.config.concurrency)
             
             async def worker(worker_id: int) -> None:
+                import asyncio as _asyncio
                 while True:
-                    try:
-                        url = queue.get_nowait()
-                    except asyncio.QueueEmpty:
+                    item = frontier.get()
+                    if not item:
                         return
+                    url, depth = item
                     try:
                         await self.crawl_single_url(crawler, url)
+                        self.pages_processed += 1
+                        # Recycle browser periodically to avoid leaks
+                        if self.pages_processed % max(1, self.config.recycle_every_n_pages) == 0:
+                            logger.info("Recycling browser after %d pages", self.pages_processed)
+                            await crawler.close()
+                            await _asyncio.sleep(0.2)
+                            await crawler.start()
                     finally:
-                        queue.task_done()
+                        await _asyncio.sleep(0)  # yield
             
             workers = [asyncio.create_task(worker(i)) for i in range(max(1, self.config.concurrency))]
-            await queue.join()
             for w in workers:
                 w.cancel()
             await asyncio.gather(*workers, return_exceptions=True)

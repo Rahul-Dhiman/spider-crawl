@@ -23,6 +23,9 @@ class ScraperConfig:
     max_pages: int = 100000
     pagination_limit: int = 300
     output_file: str = "crawl_output.json"
+    user_agent: str = "SpiderCrawl/1.0 (+https://example.com/bot)"
+    politeness_jitter_ms: int = 150
+    recycle_every_n_pages: int = 200
     
     # Login settings
     use_login: bool = False
@@ -36,14 +39,16 @@ class ScraperConfig:
     
     # Politeness
     delay_between_pages_sec: float = 0.3
+    max_depth: int = 3
+    frontier_db_path: str = "frontier.db"
+    enable_metrics: bool = True
 
 
 def load_config() -> ScraperConfig:
     """Load configuration from environment variables or defaults."""
     return ScraperConfig(
         sitemap_seeds=[
-            os.getenv("SITEMAP_SEED", "https://carders.biz/sitemap-1.xml"),
-            os.getenv("SITEMAP_SEED_2", "https://carders.biz/sitemap-2.xml")
+            os.getenv("SITEMAP_SEED", "https://carders.biz/sitemap.xml")
         ],
         domain_allow=os.getenv("DOMAIN_ALLOW", "carders.biz"),
         allow_subdomains=os.getenv("ALLOW_SUBDOMAINS", "true").lower() == "true",
@@ -55,6 +60,9 @@ def load_config() -> ScraperConfig:
         max_pages=int(os.getenv("MAX_PAGES", "100000000")),
         pagination_limit=int(os.getenv("PAGINATION_LIMIT", "1000")),
         output_file=os.getenv("OUTPUT_FILE", "crawl_output.json"),
+        user_agent=os.getenv("USER_AGENT", "SpiderCrawl/1.0 (+https://example.com/bot)"),
+        politeness_jitter_ms=int(os.getenv("POLITENESS_JITTER_MS", "150")),
+        recycle_every_n_pages=int(os.getenv("RECYCLE_EVERY_N_PAGES", "200")),
         use_login=os.getenv("USE_LOGIN", "false").lower() == "true",
         login_url=os.getenv("LOGIN_URL", ""),
         username=os.getenv("USERNAME", ""),
@@ -63,5 +71,8 @@ def load_config() -> ScraperConfig:
         password_selector=os.getenv("PASSWORD_SELECTOR", 'input[name="password"]'),
         submit_selector=os.getenv("SUBMIT_SELECTOR", '.button--icon--login'),
         post_login_ready_selector=os.getenv("POST_LOGIN_READY_SELECTOR", ".p-navgroup-link--user"),
-        delay_between_pages_sec=float(os.getenv("DELAY_BETWEEN_PAGES_SEC", "0.3"))
+        delay_between_pages_sec=float(os.getenv("DELAY_BETWEEN_PAGES_SEC", "0.3")),
+        max_depth=int(os.getenv("MAX_DEPTH", "3")),
+        frontier_db_path=os.getenv("FRONTIER_DB_PATH", "frontier.db"),
+        enable_metrics=os.getenv("ENABLE_METRICS", "true").lower() == "true"
     )

@@ -5,11 +5,10 @@ import io
 import logging
 import xml.etree.ElementTree as ET
 from typing import List, Set, Iterable
-from urllib.parse import urlparse
 
 import requests
 
-from utils import is_http_url, same_domain_and_path, url_path_depth
+from utils import is_http_url, same_domain, url_path_depth
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,11 @@ class SitemapParser:
         logger.info("Downloading sitemap: %s", url)
         
         try:
-            response = requests.get(url, timeout=45)
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "SpiderCrawl/1.0 (+https://example.com/bot)"
+            })
+            response = session.get(url, timeout=45)
             response.raise_for_status()
             
             content = response.content
@@ -72,7 +75,7 @@ class SitemapParser:
         if not is_http_url(url):
             return False
         
-        if not same_domain_and_path(url, self.domain, self.allow_subdomains):
+        if not same_domain(url, self.domain, self.allow_subdomains):
             return False
         
         if (self.max_path_depth is not None and 
@@ -80,33 +83,6 @@ class SitemapParser:
             return False
         
         return True
-    
-    def _is_allowed_url(self, url: str) -> bool:
-        """Check if URL matches domain and path requirements."""
-        try:
-            parsed = urlparse(url)
-            base_domain = self.domain.split('/')[0]  # Get domain without path
-            
-            # Check domain match
-            domain_match = (
-                parsed.netloc == base_domain or
-                (self.allow_subdomains and parsed.netloc.endswith(f".{base_domain}"))
-            )
-            
-            # Check path requirement (/threads)
-            path_match = '/threads' in parsed.path
-            
-            # Check path depth if configured
-            if self.max_path_depth is not None:
-                path_parts = [p for p in parsed.path.split('/') if p]
-                if len(path_parts) > self.max_path_depth:
-                    return False
-            
-            return domain_match and path_match
-            
-        except Exception as e:
-            logger.error(f"URL validation error: {e}")
-            return False
     
     def expand_sitemaps(self, seed_urls: List[str], max_urls: int) -> List[str]:
         """Recursively expand sitemap indexes into page URLs."""
@@ -130,7 +106,9 @@ class SitemapParser:
                 continue
             
             root_kind = self.get_tag_suffix(root)
-            locations = list(self.extract_locations(root))
+            # Normalize URLs (trim spaces, strip fragments)
+            from urllib.parse import urldefrag
+            locations = [urldefrag(u)[0] for u in self.extract_locations(root)]
             
             logger.info("Parsed %s: %s | <loc> count=%d", 
                        sitemap_url, root_kind, len(locations))
@@ -142,8 +120,6 @@ class SitemapParser:
                            len(child_sitemaps), len(queue))
             
             elif self.is_urlset(root):
-                print(f"DEBUG: Processing urlset with {len(locations)} locations")
-                logger.info("Processing urlset with %d locations", len(locations))
                 accepted = self._process_urlset(locations, page_urls, max_urls)
                 logger.info("Accepted %d URLs (total so far=%d)", 
                            accepted, len(page_urls))
@@ -160,7 +136,6 @@ class SitemapParser:
                        max_urls: int) -> int:
         """Process URLs from a urlset and add valid ones to page_urls."""
         accepted = 0
-        rejected = 0
         
         for url in locations:
             if len(page_urls) >= max_urls:
@@ -169,9 +144,5 @@ class SitemapParser:
             if self.is_valid_page_url(url):
                 page_urls.append(url)
                 accepted += 1
-            else:
-                rejected += 1
         
-        print(f"DEBUG: Final count - accepted={accepted}, rejected={rejected}")
-        logger.info("URL processing: accepted=%d, rejected=%d", accepted, rejected)
         return accepted
