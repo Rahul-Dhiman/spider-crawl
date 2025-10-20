@@ -47,6 +47,9 @@ async def main() -> None:
         crawler = WebCrawler(config)
         data = await crawler.crawl_urls(urls)
         
+        # Filter out None values (failed URLs)
+        data = [item for item in data if item is not None]
+        
         # Save final results
         await save_final_results(data, config.output_file, logger)
         

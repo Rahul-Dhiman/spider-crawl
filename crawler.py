@@ -9,6 +9,7 @@ import time
 from typing import List, Dict, Set
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from playwright.async_api import async_playwright, Browser, Page
 
 from config import ScraperConfig
 from utils import same_domain_and_path, extract_article_text, find_next_page_url, clean_text
@@ -23,6 +24,20 @@ class WebCrawler:
         self.config = config
         self.results: List[Dict[str, str]] = []
         self.login_completed = False
+        self.browser = None
+        self.context = None
+    
+    async def __aenter__(self):
+        playwright = await async_playwright().start()
+        self.browser = await playwright.chromium.launch(headless=True)
+        self.context = await self.browser.new_context()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.context:
+            await self.context.close()
+        if self.browser:
+            await self.browser.close()
     
     async def login_hook(self, page, context, **kwargs):
         """Login hook that runs only once globally."""
@@ -177,3 +192,63 @@ class WebCrawler:
         
         logger.info("Crawl finished; collected %d pages", len(self.results))
         return self.results
+    
+    async def _crawl_single_url_with_semaphore(self, url: str, semaphore: asyncio.Semaphore):
+        """Crawl a single URL with semaphore control."""
+        async with semaphore:
+            try:
+                page = await self.context.new_page()
+                try:
+                    result = await self._process_page(page, url)
+                    return result
+                except Exception as e:
+                    logger.error(f"Failed to crawl URL {url}: {str(e)}")
+                    return None
+                finally:
+                    await page.close()
+            except Exception as e:
+                logger.error(f"Failed to create page for URL {url}: {str(e)}")
+                return None
+    
+    async def _process_page(self, page: Page, url: str) -> Dict[str, str]:
+        """Process a single page and extract data."""
+        try:
+            logger.debug(f"Starting to process URL: {url}")
+            
+            logger.debug(f"Navigating to {url}")
+            response = await page.goto(url, wait_until="networkidle")
+            
+            # Log response status
+            status = response.status if response else 'unknown'
+            logger.debug(f"Page load status for {url}: {status}")
+
+            # Log page title
+            title = await page.title()
+            logger.debug(f"Page title: {title}")
+
+            # Log memory usage of the page
+            try:
+                metrics = await page.evaluate("() => performance.memory")
+                logger.debug(f"Page memory usage: {metrics.get('usedJSHeapSize', 'N/A')} bytes")
+            except Exception:
+                logger.debug("Memory metrics not available")
+
+            # Add your page processing logic here
+            # ...
+
+            result = {"url": url, "status": "success", "title": title}
+            logger.debug(f"Successfully processed {url}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error processing {url}: {str(e)}", exc_info=True)
+            # Log additional context about the failure
+            try:
+                current_url = page.url
+                if current_url != url:
+                    logger.debug(f"Failed URL redirected to: {current_url}")
+            except Exception:
+                pass
+            return None
+        finally:
+            logger.debug(f"Finished processing URL: {url}")
