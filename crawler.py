@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright, Browser, Page
 
 from config import ScraperConfig
 from utils import same_domain_and_path, extract_article_text, find_next_page_url, clean_text
+from system_monitor import get_system_health
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class WebCrawler:
         self.login_completed = False
         self.browser = None
         self.context = None
+        self.urls_processed = 0
         
         # Log configuration details
         logger.info("Initializing WebCrawler with configuration:")
@@ -89,10 +91,41 @@ class WebCrawler:
         
         return page
     
+    def _is_valid_url(self, url: str) -> bool:
+        """Validate URL against domain and path requirements"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            
+            # Check domain
+            if not parsed.netloc.endswith(self.config.domain_allow.split('/')[0]):
+                return False
+                
+            # Check if path contains /threads
+            if '/threads' not in parsed.path:
+                return False
+                
+            return True
+        except Exception as e:
+            logger.error(f"URL validation error for {url}: {e}")
+            return False
+    
     async def crawl_single_url(self, crawler: AsyncWebCrawler, url: str, 
                               semaphore: asyncio.Semaphore) -> None:
         """Crawl a single URL with pagination support."""
+        if not self._is_valid_url(url):
+            logger.debug(f"Skipping invalid URL: {url}")
+            return
+            
         async with semaphore:
+            self.urls_processed += 1
+            
+            # Check system health every 200 URLs
+            if self.urls_processed % 200 == 0:
+                stats = get_system_health()
+                if stats['memory_percent'] > 90:  # Memory warning threshold
+                    logger.warning("High memory usage detected!")
+            
             start_time = time.time()
             if self.results and len(self.results) % 10 == 0:
                 self.results.append({"url": url, "Body text content": body_text})

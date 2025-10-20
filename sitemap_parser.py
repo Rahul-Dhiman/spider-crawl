@@ -5,6 +5,7 @@ import io
 import logging
 import xml.etree.ElementTree as ET
 from typing import List, Set, Iterable
+from urllib.parse import urlparse
 
 import requests
 
@@ -79,6 +80,33 @@ class SitemapParser:
             return False
         
         return True
+    
+    def _is_allowed_url(self, url: str) -> bool:
+        """Check if URL matches domain and path requirements."""
+        try:
+            parsed = urlparse(url)
+            base_domain = self.domain.split('/')[0]  # Get domain without path
+            
+            # Check domain match
+            domain_match = (
+                parsed.netloc == base_domain or
+                (self.allow_subdomains and parsed.netloc.endswith(f".{base_domain}"))
+            )
+            
+            # Check path requirement (/threads)
+            path_match = '/threads' in parsed.path
+            
+            # Check path depth if configured
+            if self.max_path_depth is not None:
+                path_parts = [p for p in parsed.path.split('/') if p]
+                if len(path_parts) > self.max_path_depth:
+                    return False
+            
+            return domain_match and path_match
+            
+        except Exception as e:
+            logger.error(f"URL validation error: {e}")
+            return False
     
     def expand_sitemaps(self, seed_urls: List[str], max_urls: int) -> List[str]:
         """Recursively expand sitemap indexes into page URLs."""
