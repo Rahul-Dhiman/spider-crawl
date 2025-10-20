@@ -80,9 +80,6 @@ class WebCrawler:
             if self.results and len(self.results) % 10 == 0:
                 self.results.append({"url": url, "Body text content": body_text})
                 await self._save_incremental_results()
-            
-            if len(self.results) >= 1735:
-                continue
 
             try:
                 run_config = CrawlerRunConfig(
