@@ -26,6 +26,23 @@ class WebCrawler:
         self.login_completed = False
         self.browser = None
         self.context = None
+        
+        # Log configuration details
+        logger.info("Initializing WebCrawler with configuration:")
+        logger.info("Domain: %s (allow_subdomains=%s)", 
+                    config.domain_allow, config.allow_subdomains)
+        logger.info("Concurrency: %d, Max Pages: %d", 
+                    config.concurrency, config.max_pages)
+        logger.info("Headless Mode: %s, Bypass Cache: %s", 
+                    config.headless, config.bypass_cache)
+        logger.info("Login Enabled: %s", config.use_login)
+        logger.info("Pagination Limit: %d, Delay Between Pages: %.2f sec", 
+                    config.pagination_limit, config.delay_between_pages_sec)
+        logger.info("Output File: %s", config.output_file)
+        logger.info("Request Timeout: %d ms", config.request_timeout_ms)
+        
+        if config.max_path_depth:
+            logger.info("Max Path Depth: %d", config.max_path_depth)
     
     async def __aenter__(self):
         playwright = await async_playwright().start()
